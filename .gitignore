@@ -1,0 +1,15 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+
+# Google API credentials and token
+token.json
+credentials.json
+
+# Configuration file
+config.json
+
+# macOS specific files
+.DS_Store
