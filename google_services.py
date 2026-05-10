@@ -17,10 +17,15 @@ SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 TOKEN_PATH = os.path.join(SCRIPT_DIR, "token.json")
 CREDENTIALS_PATH = os.path.join(SCRIPT_DIR, "credentials.json")
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/gmail.send"]
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.readonly",
+]
 
 def get_google_services():
-    """Authenticates with Google and returns Calendar, Sheets, and Gmail API services."""
+    """Authenticates with Google and returns Calendar, Sheets, Gmail, and Drive API services."""
     creds = None
     if os.path.exists(TOKEN_PATH):
         with open(TOKEN_PATH, "r") as token_file:
@@ -49,16 +54,22 @@ def get_google_services():
         gsheets_service = build("sheets", "v4", credentials=creds)
         gcal_service = build("calendar", "v3", credentials=creds)
         gmail_service = build("gmail", "v1", credentials=creds)
-        return gcal_service, gsheets_service, gmail_service
+        drive_service = build("drive", "v3", credentials=creds)
+        return gcal_service, gsheets_service, gmail_service, drive_service
     except HttpError as err:
         logging.error(f"Error building Google services: {err}")
-        return None, None, None
+        return None, None, None, None
+
+def _restaurants_tab(google_config: dict) -> str:
+    return google_config.get("restaurants_tab", "Restaurants")
+
 
 def get_restaurants_from_sheet(gsheets_service, google_config: dict):
-    """Reads the restaurant list from the Google Sheet."""
+    """Reads the restaurant list from the Restaurants tab of the Google Sheet."""
+    tab = _restaurants_tab(google_config)
     try:
         sheet = gsheets_service.spreadsheets()
-        result = sheet.values().get(spreadsheetId=google_config['sheet_id'], range="A:C").execute()
+        result = sheet.values().get(spreadsheetId=google_config['sheet_id'], range=f"{tab}!A:C").execute()
         values = result.get("values", [])
         if not values:
             return []
@@ -69,7 +80,7 @@ def get_restaurants_from_sheet(gsheets_service, google_config: dict):
                     "name": row[0],
                     "venue_id": row[1] if len(row) > 1 else None,
                     "platform": row[2] if len(row) > 2 else None,
-                    "row_index": i + 2 # 1-based index for sheets, plus 1 for header
+                    "row_index": i + 2,
                 })
         return restaurants
     except HttpError as err:
@@ -77,16 +88,14 @@ def get_restaurants_from_sheet(gsheets_service, google_config: dict):
         return []
 
 def update_restaurant_in_sheet(gsheets_service, google_config: dict, row_index: int, venue_id: str, platform: str):
-    """Updates a restaurant's venue ID and platform in the Google Sheet."""
+    """Updates a restaurant's venue ID and platform in the Restaurants tab."""
+    tab = _restaurants_tab(google_config)
     try:
-        body = {
-            'values': [[venue_id, platform]]
-        }
         gsheets_service.spreadsheets().values().update(
             spreadsheetId=google_config['sheet_id'],
-            range=f"B{row_index}:C{row_index}",
+            range=f"{tab}!B{row_index}:C{row_index}",
             valueInputOption="USER_ENTERED",
-            body=body
+            body={"values": [[venue_id, platform]]},
         ).execute()
         logging.info(f"Updated row {row_index} with venue_id={venue_id} and platform={platform}")
     except HttpError as err:
@@ -95,11 +104,15 @@ def update_restaurant_in_sheet(gsheets_service, google_config: dict, row_index: 
 
 
 def find_free_evenings(gcal_service, user_config: dict, google_config: dict, days_to_check=14, reservation_duration_hours=2):
-    """Finds free time slots across all user calendars based on preferences."""
+    """Finds free evening slots across all user calendars based on preferences.
+
+    Supports per-day time overrides via user_config['day_time_overrides'].
+    Returns one slot per free evening (earliest available start time).
+    """
     user_timezone = user_config['timezone']
     preferred_days = user_config['preferred_days']
-    start_time_str = user_config['preferred_times']['start_time']
-    end_time_str = user_config['preferred_times']['end_time']
+    default_times = user_config['preferred_times']
+    day_time_overrides = user_config.get('day_time_overrides', {})
     calendar_ids = google_config['calendar_ids']
 
     local_tz = pytz.timezone(user_timezone)
@@ -110,63 +123,106 @@ def find_free_evenings(gcal_service, user_config: dict, google_config: dict, day
     time_max = (now_utc + datetime.timedelta(days=days_to_check)).isoformat()
 
     try:
-        freebusy_query = {
+        freebusy_result = gcal_service.freebusy().query(body={
             "timeMin": time_min,
             "timeMax": time_max,
-            "items": [{"id": cal_id} for cal_id in calendar_ids]
-        }
-        freebusy_result = gcal_service.freebusy().query(body=freebusy_query).execute()
-        
+            "items": [{"id": cal_id} for cal_id in calendar_ids],
+        }).execute()
+
         all_busy_slots = []
         for cal_id in calendar_ids:
             all_busy_slots.extend(freebusy_result.get('calendars', {}).get(cal_id, {}).get('busy', []))
 
         free_slots = []
-        start_hour, start_minute = map(int, start_time_str.split(':'))
-        end_hour, end_minute = map(int, end_time_str.split(':'))
+        seen_dates = set()
 
         for day_offset in range(days_to_check):
             current_day_local = now_local + datetime.timedelta(days=day_offset)
             day_name = current_day_local.strftime('%A')
+            if day_name not in preferred_days:
+                continue
 
-            if day_name in preferred_days:
-                potential_start_local = current_day_local.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
-                end_of_window = current_day_local.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+            times = day_time_overrides.get(day_name, default_times)
+            start_hour, start_minute = map(int, times['start_time'].split(':'))
+            end_hour, end_minute = map(int, times['end_time'].split(':'))
 
-                while potential_start_local < end_of_window:
-                    potential_end_local = potential_start_local + datetime.timedelta(hours=reservation_duration_hours)
+            potential_start_local = current_day_local.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+            end_of_window = current_day_local.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
 
-                    if potential_start_local < now_local:
-                        potential_start_local += datetime.timedelta(minutes=15)
-                        continue
-
-                    potential_start_utc = potential_start_local.astimezone(datetime.timezone.utc)
-                    potential_end_utc = potential_end_local.astimezone(datetime.timezone.utc)
-
-                    is_free = True
-                    for busy in all_busy_slots:
-                        busy_start_utc = parser.isoparse(busy['start'])
-                        busy_end_utc = parser.isoparse(busy['end'])
-                        if max(potential_start_utc, busy_start_utc) < min(potential_end_utc, busy_end_utc):
-                            is_free = False
-                            break
-                    
-                    if is_free:
-                        free_slots.append(potential_start_local)
-                    
+            while potential_start_local < end_of_window:
+                if potential_start_local < now_local:
                     potential_start_local += datetime.timedelta(minutes=15)
-        
+                    continue
+
+                potential_end_local = potential_start_local + datetime.timedelta(hours=reservation_duration_hours)
+                potential_start_utc = potential_start_local.astimezone(datetime.timezone.utc)
+                potential_end_utc = potential_end_local.astimezone(datetime.timezone.utc)
+
+                is_free = True
+                for busy in all_busy_slots:
+                    busy_start_utc = parser.isoparse(busy['start'])
+                    busy_end_utc = parser.isoparse(busy['end'])
+                    if max(potential_start_utc, busy_start_utc) < min(potential_end_utc, busy_end_utc):
+                        is_free = False
+                        break
+
+                if is_free:
+                    date_key = potential_start_local.strftime('%Y-%m-%d')
+                    if date_key not in seen_dates:
+                        seen_dates.add(date_key)
+                        free_slots.append(potential_start_local)
+                    break  # one slot per evening
+
+                potential_start_local += datetime.timedelta(minutes=15)
+
         return free_slots
-        
+
     except HttpError as err:
         logging.error(f"An error occurred with Google Calendar API: {err}")
         return []
 
+
+def get_events_for_date_range(gcal_service, calendar_ids: list, start_date, end_date, timezone: str) -> list[dict]:
+    """Fetch all events across all calendars between start_date and end_date (inclusive)."""
+    local_tz = pytz.timezone(timezone)
+    start_dt = local_tz.localize(datetime.datetime.combine(start_date, datetime.time.min))
+    end_dt = local_tz.localize(datetime.datetime.combine(end_date, datetime.time.max))
+
+    all_events = []
+    for cal_id in calendar_ids:
+        try:
+            result = gcal_service.events().list(
+                calendarId=cal_id,
+                timeMin=start_dt.isoformat(),
+                timeMax=end_dt.isoformat(),
+                singleEvents=True,
+                orderBy='startTime',
+            ).execute()
+            for event in result.get('items', []):
+                summary = event.get('summary', '(no title)')
+                start = event.get('start', {})
+                start_str = start.get('dateTime', start.get('date', ''))
+                all_events.append({'summary': summary, 'start': start_str})
+        except HttpError as e:
+            logging.error(f"Error fetching events for {cal_id}: {e}")
+
+    # Deduplicate events that appear across multiple calendars
+    seen = set()
+    unique_events = []
+    for e in all_events:
+        key = (e['summary'], e['start'][:10])
+        if key not in seen:
+            seen.add(key)
+            unique_events.append(e)
+
+    return unique_events
+
 def create_calendar_event(gcal_service, start_time, restaurant_name, party_size, google_config: dict):
     """Creates a new event in the user's specified Google Calendar."""
     end_time = start_time + datetime.timedelta(hours=2)
+    time_label = start_time.strftime("%-I:%M%p").replace("AM", "AM").replace("PM", "PM")
     event = {
-        'summary': f'Dinner at {restaurant_name}',
+        'summary': f'{restaurant_name} @{time_label}',
         'location': restaurant_name,
         'description': f'Reservation for {party_size}.',
         'start': {'dateTime': start_time.isoformat(), 'timeZone': str(start_time.tzinfo)},
@@ -201,7 +257,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
     try:
-        config_path = os.path.join(SCRIPT_DIR, '..', 'config.json')
+        config_path = os.path.join(SCRIPT_DIR, 'config.json')
         with open(config_path, 'r') as f:
             config = json.load(f)
         google_config = config['google']
@@ -212,7 +268,7 @@ if __name__ == "__main__":
         exit()
 
     logging.info("--- Starting Google Services Test ---")
-    gcal_service, gsheets_service, gmail_service = get_google_services()
+    gcal_service, gsheets_service, gmail_service, drive_service = get_google_services()
 
     if gsheets_service:
         logging.info("--- Testing Google Sheets ---")

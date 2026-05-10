@@ -1,5 +1,9 @@
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-requests
-pytz
+anthropic>=0.52.0
+python-telegram-bot[job-queue]>=21.0
+google-api-python-client>=2.177.0
+google-auth>=2.40.3
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.2
+requests>=2.32.4
+python-dateutil>=2.9.0
+pytz>=2025.2

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mwlong.reservation-agent</string>
+    <key>UserName</key>
+    <string>mwlong</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mwlong/projects/auto-res/reservation-agent/.venv/bin/python</string>
+        <string>/Users/mwlong/projects/auto-res/reservation-agent/telegram_bot.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/mwlong/projects/auto-res/reservation-agent</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/mwlong/projects/auto-res/reservation-agent/bot.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mwlong/projects/auto-res/reservation-agent/bot.log</string>
+</dict>
+</plist>

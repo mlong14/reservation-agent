@@ -7,41 +7,112 @@ import logging
 # Base URL for Resy's API
 RESY_API_URL = "https://api.resy.com"
 
-def find_venue_id(resy_config: dict, restaurant_name: str):
-    """
-    Finds the Resy venue ID for a given restaurant name.
-
-    Args:
-        resy_config: A dictionary containing Resy API key and auth token.
-        restaurant_name: The name of the restaurant to search for.
-
-    Returns:
-        The venue ID if found, otherwise None.
-    """
-    headers = {
-        "Authorization": f'ResyAPI api_key="{resy_config["api_key"]}"'
-    }
+def _resy_venue_search(api_key: str, query: str) -> str | None:
+    """Raw Resy venue search — returns objectID of first hit or None."""
+    headers = {"Authorization": f'ResyAPI api_key="{api_key}"'}
     payload = {
-        "query": restaurant_name,
+        "query": query,
         "types": ["venue"],
-        "geo": {
-            "latitude": 37.7749, # Default to SF
-            "longitude": -122.4194,
-            "radius": 32200
-        }
+        "geo": {"latitude": 37.7749, "longitude": -122.4194, "radius": 32200},
     }
     try:
-        response = requests.post(f"{RESY_API_URL}/3/venuesearch/search", headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("search", {}).get("hits"):
-            return data["search"]["hits"][0].get("objectID")
-        return None
+        resp = requests.post(f"{RESY_API_URL}/3/venuesearch/search", headers=headers, json=payload)
+        resp.raise_for_status()
+        hits = resp.json().get("search", {}).get("hits", [])
+        return hits[0].get("objectID") if hits else None
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error finding venue ID for {restaurant_name}: {e}")
-        if e.response:
-            logging.error(f"Response Content: {e.response.text}")
+        logging.error(f"Resy venue search error for '{query}': {e}")
         return None
+
+
+def find_venue_id(resy_config: dict, restaurant_name: str):
+    """Find Resy venue ID by name, with fallbacks for fuzzy name matching.
+
+    Resy's search uses Algolia which can drop stop words like 'on', 'at', 'the'
+    from multi-word queries. Tries progressively shorter name fragments.
+    """
+    api_key = resy_config["api_key"]
+
+    # Try full name first
+    result = _resy_venue_search(api_key, restaurant_name)
+    if result:
+        return result
+
+    # Strip common location suffixes: "Kuma on Valencia" → "Kuma"
+    for separator in (" on ", " at ", " - ", " & ", " and "):
+        if separator.lower() in restaurant_name.lower():
+            short = restaurant_name.split(separator)[0].strip()
+            if short and short.lower() != restaurant_name.lower():
+                result = _resy_venue_search(api_key, short)
+                if result:
+                    logging.info(f"  Found via shortened name '{short}' (from '{restaurant_name}')")
+                    return result
+
+    # Last resort: first two words
+    words = restaurant_name.split()
+    if len(words) > 2:
+        short = " ".join(words[:2])
+        result = _resy_venue_search(api_key, short)
+        if result:
+            logging.info(f"  Found via first-two-words '{short}' (from '{restaurant_name}')")
+            return result
+
+    return None
+
+def browse_sf_venues(resy_config: dict) -> list[dict]:
+    """Return all SF venues on Resy via paginated empty-query search.
+
+    Uses the same payload as resy.com/cities/san-francisco-ca/search with
+    availability=False to capture every venue, not just ones with open slots today.
+    Each entry: {venue_id, name, url_slug}.
+    """
+    import time as _time
+    api_key = resy_config["api_key"]
+    headers = {"Authorization": f'ResyAPI api_key="{api_key}"'}
+    seen_ids: set[str] = set()
+    all_venues: list[dict] = []
+    page = 1
+
+    while True:
+        payload = {
+            "availability": False,
+            "geo": {"latitude": 37.7577, "longitude": -122.4376, "radius": 32200},
+            "page": page,
+            "per_page": 100,
+            "query": "",
+            "types": ["venue"],
+        }
+        try:
+            resp = requests.post(f"{RESY_API_URL}/3/venuesearch/search", headers=headers, json=payload)
+            resp.raise_for_status()
+            search = resp.json().get("search", {})
+            hits = search.get("hits", [])
+            nb_pages = search.get("nbPages", 1)
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Resy browse error on page {page}: {e}")
+            break
+
+        for hit in hits:
+            # Only SF proper (excludes Oakland, Berkeley, etc. within the radius)
+            if hit.get("location", {}).get("code") != "sf":
+                continue
+            vid = hit.get("id", {}).get("resy")
+            name = hit.get("name", "").strip()
+            if not vid or not name:
+                continue
+            vid = str(vid)
+            if vid not in seen_ids:
+                seen_ids.add(vid)
+                all_venues.append({"venue_id": vid, "name": name, "url_slug": hit.get("url_slug", "")})
+
+        if page >= nb_pages:
+            break
+        page += 1
+        _time.sleep(0.3)
+
+    logging.info(f"Resy browse: {len(all_venues)} unique SF venues across {page} pages")
+    return all_venues
+
 
 def get_active_reservations(resy_config: dict):
     """
@@ -143,6 +214,39 @@ def find_slots(resy_config: dict, venue_id: int, party_size: int, date: str, pre
     except (IndexError, KeyError) as e:
         logging.error(f"Could not parse response from Resy, structure may have changed: {e}")
         return []
+
+def find_available_times(resy_config: dict, venue_id: int, party_size: int, date: str, preferred_times: dict, preferred_seating: list[str] = []) -> list[dict]:
+    """Like find_slots but returns [{time, type}] dicts for display in proposals."""
+    headers = {
+        "Authorization": f'ResyAPI api_key="{resy_config["api_key"]}"',
+        "x-resy-auth-token": resy_config["auth_token"],
+        "Content-Type": "application/json",
+        "User-Agent": "Resy/3.12.0 (iPhone; iOS 13.3; Scale/2.00)"
+    }
+    params = {"venue_id": venue_id, "party_size": party_size, "day": date, "lat": 0, "long": 0}
+    try:
+        response = requests.get(f"{RESY_API_URL}/4/find", headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        venues = data.get("results", {}).get("venues")
+        if not venues:
+            return []
+        slots = venues[0].get("slots", [])
+        start_t = datetime.datetime.strptime(preferred_times["start_time"], "%H:%M").time()
+        end_t = datetime.datetime.strptime(preferred_times["end_time"], "%H:%M").time()
+        result = []
+        for slot in slots:
+            slot_time_str = slot.get("date", {}).get("start", " ").split(" ")[1]
+            slot_time = datetime.datetime.strptime(slot_time_str, "%H:%M:%S").time()
+            seating_type = slot.get("config", {}).get("type", "")
+            token = slot.get("config", {}).get("token")
+            if token and (not preferred_seating or seating_type in preferred_seating) and start_t <= slot_time <= end_t:
+                result.append({"time": slot_time_str[:5], "type": seating_type})
+        return result
+    except Exception as e:
+        logging.error(f"Error finding available times for venue {venue_id}: {e}")
+        return []
+
 
 def book_slot(resy_config: dict, venue_id: int, party_size: int, date: str, preferred_times: dict, preferred_seating: list[str]):
     """

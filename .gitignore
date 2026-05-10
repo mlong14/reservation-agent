@@ -8,8 +8,16 @@ __pycache__/
 token.json
 credentials.json
 
-# Configuration file
+# Configuration file (contains API keys)
 config.json
 
-# macOS specific files
+# Runtime state and logs
+state.json
+bot.log
+
+# HAR captures (may contain auth tokens)
+*.har
+
+# Misc
+*.html
 .DS_Store
