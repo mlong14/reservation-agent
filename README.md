@@ -47,11 +47,18 @@ pip install -r requirements.txt
 3. Create OAuth 2.0 credentials → download as `credentials.json`
 4. Run `python google_services.py` once to complete OAuth flow (creates `token.json`)
 
-### 3. Resy credentials
+### 3. Google Sheet
+
+1. Create a new Google Sheet at [sheets.google.com](https://sheets.google.com)
+2. Create two tabs named exactly **`Restaurants`** and **`Venue Data`** (the pipeline creates/manages these but the sheet itself must exist)
+3. Copy the sheet ID from the URL: `https://docs.google.com/spreadsheets/d/`**`<sheet-id>`**`/edit`
+4. Share the sheet with edit access to the Google account used for OAuth
+
+### 4. Resy credentials
 
 Capture your Resy API key and auth token from browser DevTools (Network tab on resy.com).
 
-### 4. config.json
+### 5. config.json
 
 ```bash
 cp config.json.example config.json
@@ -59,12 +66,12 @@ cp config.json.example config.json
 
 Fill in your credentials. Never commit `config.json`.
 
-### 5. Telegram bot
+### 6. Telegram bot
 
 1. Create a bot via [@BotFather](https://t.me/BotFather), copy the token into `config.json`
 2. Start the bot, send it any message, then get your chat ID via the Telegram API
 
-### 6. Run as a background service (macOS)
+### 7. Run as a background service (macOS)
 
 Create a launchd plist at `/Library/LaunchDaemons/com.yourname.reservation-agent.plist`:
 
