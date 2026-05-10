@@ -1,0 +1,43 @@
+{
+  "resy": {
+    "api_key": "your-resy-api-key",
+    "auth_token": "your-resy-auth-token",
+    "resy_payment_method_id": 0
+  },
+  "user": {
+    "party_size": 2,
+    "preferred_days": ["Friday", "Thursday"],
+    "preferred_times": {
+      "start_time": "18:30",
+      "end_time": "20:00"
+    },
+    "day_time_overrides": {
+      "Thursday": {"start_time": "19:00", "end_time": "20:00"}
+    },
+    "preferred_seating": ["Indoor", "Bar"],
+    "timezone": "America/Los_Angeles",
+    "reservation_target": 2,
+    "proposal_count": 3
+  },
+  "google": {
+    "sheet_id": "your-google-sheet-id",
+    "restaurants_tab": "Restaurants",
+    "calendar_ids": ["your@gmail.com"],
+    "event_calendar_id": "your@gmail.com"
+  },
+  "email": {
+    "recipient": "your@gmail.com"
+  },
+  "google_places": {
+    "api_key": "your-google-places-api-key",
+    "min_rating": 4.3,
+    "min_rating_count": 40,
+    "monthly_call_limit": 900,
+    "max_pages_per_run": 5
+  },
+  "anthropic_api_key": "your-anthropic-api-key",
+  "telegram": {
+    "bot_token": "your-telegram-bot-token",
+    "chat_id": "your-telegram-chat-id"
+  }
+}

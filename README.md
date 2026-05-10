@@ -53,47 +53,11 @@ Capture your Resy API key and auth token from browser DevTools (Network tab on r
 
 ### 4. config.json
 
-Copy and fill in `config.json` (never commit this file):
-
-```json
-{
-  "resy": {
-    "api_key": "...",
-    "auth_token": "...",
-    "resy_payment_method_id": 0
-  },
-  "user": {
-    "party_size": 2,
-    "preferred_days": ["Friday", "Thursday"],
-    "preferred_times": { "start_time": "18:30", "end_time": "20:00" },
-    "day_time_overrides": {
-      "Thursday": { "start_time": "19:00", "end_time": "20:00" }
-    },
-    "preferred_seating": ["Indoor", "Bar"],
-    "timezone": "America/Los_Angeles",
-    "reservation_target": 2,
-    "proposal_count": 3
-  },
-  "google": {
-    "sheet_id": "...",
-    "restaurants_tab": "Restaurants",
-    "calendar_ids": ["your@gmail.com"],
-    "event_calendar_id": "your@gmail.com"
-  },
-  "email": { "recipient": "your@gmail.com" },
-  "google_places": {
-    "api_key": "...",
-    "min_rating": 4.3,
-    "min_rating_count": 40,
-    "monthly_call_limit": 900
-  },
-  "anthropic_api_key": "...",
-  "telegram": {
-    "bot_token": "...",
-    "chat_id": "..."
-  }
-}
+```bash
+cp config.json.example config.json
 ```
+
+Fill in your credentials. Never commit `config.json`.
 
 ### 5. Telegram bot
 
@@ -102,18 +66,47 @@ Copy and fill in `config.json` (never commit this file):
 
 ### 6. Run as a background service (macOS)
 
-Edit `com.mwlong.reservation-agent.plist` to replace the username and paths for your system, then:
+Create a launchd plist at `/Library/LaunchDaemons/com.yourname.reservation-agent.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.yourname.reservation-agent</string>
+    <key>UserName</key>
+    <string>your-mac-username</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/reservation-agent/.venv/bin/python</string>
+        <string>/path/to/reservation-agent/telegram_bot.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/reservation-agent</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/path/to/reservation-agent/bot.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/reservation-agent/bot.log</string>
+</dict>
+</plist>
+```
 
 ```bash
-sudo cp com.mwlong.reservation-agent.plist /Library/LaunchDaemons/
-sudo chown root:wheel /Library/LaunchDaemons/com.mwlong.reservation-agent.plist
-sudo launchctl load /Library/LaunchDaemons/com.mwlong.reservation-agent.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.yourname.reservation-agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.yourname.reservation-agent.plist
 ```
 
 To restart after code changes:
 ```bash
-sudo launchctl unload /Library/LaunchDaemons/com.mwlong.reservation-agent.plist
-sudo launchctl load /Library/LaunchDaemons/com.mwlong.reservation-agent.plist
+sudo launchctl unload /Library/LaunchDaemons/com.yourname.reservation-agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.yourname.reservation-agent.plist
 ```
 
 ## Telegram commands
